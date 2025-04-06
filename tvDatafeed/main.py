@@ -108,7 +108,7 @@ class TvDatafeed:
                 # Теперь используем cookies для получения данных
                 response = requests.get("https://www.tradingview.com", cookies=cookie_dict, headers=self.__signin_headers)
                 print("response itself:", response)
-                print("response content:", response.content)
+                print("response json:", response.json())
                 token = response.json()['user']['auth_token']
                 print("response json:", response.json())
             except Exception as e:
