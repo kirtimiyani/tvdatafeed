@@ -111,6 +111,7 @@ class TvDatafeed:
                 print("response json:", response.json())
                 print("response itself:", response)
             except Exception as e:
+                print(str(e))
                 logger.error('error while signin')
                 token = None
 
