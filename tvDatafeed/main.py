@@ -1,3 +1,5 @@
+from selenium import webdriver
+import time
 import datetime
 import enum
 import json
@@ -74,12 +76,37 @@ class TvDatafeed:
             token = None
 
         else:
+            driver = webdriver.Chrome()
+            driver.get(self.__sign_in_url)
+
             data = {"username": username,
                     "password": password,
                     "remember": "on"}
             try:
-                response = requests.post(
-                    url=self.__sign_in_url, data=data, headers=self.__signin_headers)
+                time.sleep(2)  
+                print("Пожалуйста, решите капчу и войдите в систему.")
+
+                try:
+                    while True:
+                        current_url = driver.current_url
+                        if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/"]:
+                            print("Успешный вход в систему!")
+                            break
+                        time.sleep(1)  # Проверяем каждые 1 секунду
+                except Exception as e:
+                    logger.error("Ошибка при проверке URL: %s", str(e))
+                    driver.quit()
+                    return None
+
+                # Получение токена аутентификации
+                cookies = driver.get_cookies()
+                driver.quit()
+
+                # Преобразование cookies в формат для запроса
+                cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+                
+                # Теперь используем cookies для получения данных
+                response = requests.get("https://www.tradingview.com", cookies=cookie_dict, headers=self.__signin_headers)
                 token = response.json()['user']['auth_token']
             except Exception as e:
                 logger.error('error while signin')
