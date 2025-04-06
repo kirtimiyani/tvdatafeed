@@ -97,7 +97,7 @@ class TvDatafeed:
                     logger.error("Ошибка при проверке URL: %s", str(e))
                     driver.quit()
                     return None
-
+                
                 # Получение токена аутентификации
                 cookies = driver.get_cookies()
                 driver.quit()
@@ -106,7 +106,7 @@ class TvDatafeed:
                 cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies}
                 
                 # Теперь используем cookies для получения данных
-                response = requests.get("https://www.tradingview.com", cookies=cookie_dict, headers=self.__signin_headers)
+                response = requests.get(current_url, cookies=cookie_dict, headers={'Referer': current_url})
                 print("response itself:", response)
                 print("response headers:", response.headers)
                 token = response.json()['user']['auth_token']
