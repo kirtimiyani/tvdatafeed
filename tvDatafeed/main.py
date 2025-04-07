@@ -97,22 +97,35 @@ class TvDatafeed:
                     logger.error("Ошибка при проверке URL: %s", str(e))
                     driver.quit()
                     return None
-                
-                # Получение токена аутентификации
-                cookies = driver.get_cookies()
-                driver.quit()
+                    
+                # Получение HTML-кода страницы
+                html = driver.page_source
+                driver.quit() # Закрытие браузера
 
-                # Преобразование cookies в формат для запроса
-                cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies}
-                
-                # Теперь используем cookies для получения данных
-                response = requests.post(
-                    url=self.__sign_in_url, data=data, headers=self.__signin_headers, cookies=cookie_dict)
-                print("response itself:", response)
-                print("response headers:", response.headers)
-                token = response.headers['X-Amz-Cf-Id']
+                # Парсинг HTML для извлечения auth_token
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # Пример поиска токена в скриптах
+                script_tags = soup.find_all('script')
+                for script in script_tags:
+                    if 'auth_token' in script.text:
+                        # Пример извлечения токена
+                        try:
+                            # Предположим, что токен представлен как 'auth_token":"YOUR_TOKEN"
+                            start = script.text.find('auth_token":"') + len('auth_token":"')
+                            end = script.text.find('"', start)
+                            token = script.text[start:end]
+                            logger.info("Найден auth_token: %s", token)
+                            return token
+                        except Exception as e:
+                            logger.error("Ошибка при извлечении токена: %s", str(e))
+                            return None
+        
+                logger.error("auth_token не найден на странице.")
+                return None
+
             except Exception as e:
-                print(str(e))
+                print("ERROR:", str(e))
                 logger.error('error while signin')
                 token = None
 
