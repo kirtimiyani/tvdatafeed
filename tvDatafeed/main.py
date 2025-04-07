@@ -11,6 +11,7 @@ import pandas as pd
 from websocket import create_connection
 import requests
 import json
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
