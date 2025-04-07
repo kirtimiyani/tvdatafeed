@@ -106,7 +106,8 @@ class TvDatafeed:
                 cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies}
                 
                 # Теперь используем cookies для получения данных
-                response = requests.get(current_url, cookies=cookie_dict, headers={'Referer': current_url})
+                response = requests.post(
+                    url=self.__sign_in_url, data=data, headers=self.__signin_headers, cookies=cookie_dict)
                 print("response itself:", response)
                 print("response headers:", response.headers)
                 token = response.json()['user']['auth_token']
