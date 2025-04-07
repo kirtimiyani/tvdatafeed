@@ -110,8 +110,7 @@ class TvDatafeed:
                     url=self.__sign_in_url, data=data, headers=self.__signin_headers, cookies=cookie_dict)
                 print("response itself:", response)
                 print("response headers:", response.headers)
-                token = response.json()['user']['auth_token']
-                print("response json:", response.json())
+                token = response.headers['X-Amz-Cf-Id']
             except Exception as e:
                 print(str(e))
                 logger.error('error while signin')
