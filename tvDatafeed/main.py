@@ -77,63 +77,71 @@ class TvDatafeed:
             token = None
 
         else:
-            driver = webdriver.Chrome()
-            driver.get(self.__sign_in_url)
-
             data = {"username": username,
                     "password": password,
                     "remember": "on"}
             try:
-                time.sleep(2)  
-                print("Пожалуйста, решите капчу и войдите в систему.")
-
-                try:
-                    while True:
-                        current_url = driver.current_url
-                        if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/"]:
-                            print("Успешный вход в систему!")
-                            break
-                        time.sleep(1)  # Проверяем каждые 1 секунду
-                except Exception as e:
-                    logger.error("Ошибка при проверке URL: %s", str(e))
-                    driver.quit()
-                    return None
-                    
-                # Получение HTML-кода страницы
-                print("CHECKPOINT 1")
-                html = driver.page_source
-                driver.quit() # Закрытие браузера
-                print("CHECKPOINT 2")
-                # Парсинг HTML для извлечения auth_token
-                soup = BeautifulSoup(html, 'html.parser')
-                print("CHECKPOINT 2.5")
-
-                # Пример поиска токена в скриптах
-                script_tags = soup.find_all('script')
-                print("CHECKPOINT 3")
-                for script in script_tags:
-                    if 'auth_token' in script.text:
-                        # Пример извлечения токена
-                        try:
-                            # Предположим, что токен представлен как 'auth_token":"YOUR_TOKEN"
-                            start = script.text.find('auth_token":"') + len('auth_token":"')
-                            end = script.text.find('"', start)
-                            token = script.text[start:end]
-                            logger.info("Найден auth_token: %s", token)
-                            return token
-                        except Exception as e:
-                            logger.error("Ошибка при извлечении токена: %s", str(e))
-                            return None
-        
-                logger.error("auth_token не найден на странице.")
-                return None
-
+                response = requests.post(
+                    url=self.__sign_in_url, data=data, headers=self.__signin_headers)
+                token = response.json()['user']['auth_token']
             except Exception as e:
-                print("ERROR:", str(e))
-                logger.error('error while signin')
+                logger.error('Captha required, please singin manually')
                 token = None
-
-        return token
+                
+                try:
+                    driver = webdriver.Chrome()
+                    driver.get(self.__sign_in_url)
+                    
+                    time.sleep(2)  
+                    print("Пожалуйста, решите капчу и войдите в систему.")
+    
+                    try:
+                        while True:
+                            current_url = driver.current_url
+                            if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/"]:
+                                print("Успешный вход в систему!")
+                                break
+                            time.sleep(1)  # Проверяем каждые 1 секунду
+                    except Exception as e:
+                        logger.error("Ошибка при проверке URL: %s", str(e))
+                        driver.quit()
+                        return None
+                        
+                    # Получение HTML-кода страницы
+                    print("CHECKPOINT 1")
+                    html = driver.page_source
+                    driver.quit() # Закрытие браузера
+                    print("CHECKPOINT 2")
+                    # Парсинг HTML для извлечения auth_token
+                    soup = BeautifulSoup(html, 'html.parser')
+                    print("CHECKPOINT 2.5")
+    
+                    # Пример поиска токена в скриптах
+                    script_tags = soup.find_all('script')
+                    print("CHECKPOINT 3")
+                    for script in script_tags:
+                        if 'auth_token' in script.text:
+                            # Пример извлечения токена
+                            try:
+                                # Предположим, что токен представлен как 'auth_token":"YOUR_TOKEN"
+                                start = script.text.find('auth_token":"') + len('auth_token":"')
+                                end = script.text.find('"', start)
+                                token = script.text[start:end]
+                                logger.info("Найден auth_token: %s", token)
+                                return token
+                            except Exception as e:
+                                logger.error("Ошибка при извлечении токена: %s", str(e))
+                                return None
+            
+                    logger.error("auth_token не найден на странице.")
+                    return None
+    
+                except Exception as e:
+                    print("ERROR:", str(e))
+                    logger.error('error while signin')
+                    token = None
+    
+            return token
 
     def __create_connection(self):
         logging.debug("creating websocket connection")
