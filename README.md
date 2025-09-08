@@ -1,7 +1,31 @@
 # **NOTE**
 
 This is a fork of the original [TvDatafeed](https://github.com/rongardF/tvdatafeed.git) project by StreamAlpha. This fork has live data retrieving feature implemented. 
-More information about this will be found in the TvDatafeedLive section down below in the README. This fork^2 has >=1s timeframe support implemented.
+More information about this will be found in the TvDatafeedLive section down below in the README.
+
+## **🆕 NEW FEATURES IN THIS FORK**
+
+This fork includes several important enhancements:
+
+### 🕒 **Extended Timeframe Support**
+- Added support for **seconds-based intervals** (1s, 5s, 10s, 15s, 30s, 45s)
+- Now supports **>=1 second timeframes** for high-frequency data analysis
+- All existing timeframes remain fully supported
+
+### 🔐 **Automatic Token Management System**
+- **Automatic saving and loading** of auth tokens between sessions
+- **Eliminates frequent CAPTCHA requests** from TradingView
+- **Automatic token validation** and refresh when expired
+- **Secure token storage** with user binding
+- **Backward compatible** - existing code works without changes
+
+### 🤖 **Manual CAPTCHA Resolution Support**
+- **Automatic browser launch** when CAPTCHA is required
+- **Manual CAPTCHA solving** through browser interface
+- **Automatic token extraction** after successful login
+- **Seamless integration** with existing authentication flow
+
+These features make the library more robust and user-friendly for automated data collection scenarios.
 
 # **TvDatafeed**
 
@@ -17,6 +41,15 @@ This module can be installed from github repo
 ```sh
 pip install --upgrade --no-cache-dir git+https://github.com/StesNiash/tvdatafeed.git
 ```
+
+### **Additional Dependencies**
+
+This fork includes additional dependencies for enhanced functionality:
+
+- **selenium** - For automatic CAPTCHA resolution via browser automation
+- **beautifulsoup4** - For HTML parsing during token extraction
+
+These dependencies are automatically installed with the package. If you encounter issues with Chrome browser automation, make sure you have Chrome installed and accessible in your system PATH.
 
 For usage instructions, watch these videos-
 
@@ -56,6 +89,71 @@ tv = TvDatafeed()
 ```
 
 when using without login, following warning will be shown `you are using nologin method, data you access may be limited`
+
+---
+
+## 🆕 **New Features Usage Examples**
+
+### **Using Seconds-based Intervals**
+```python
+from tvDatafeed import TvDatafeed, Interval
+
+# Initialize with credentials
+tv = TvDatafeed(username='your_username', password='your_password')
+
+# Get 1-second interval data (requires TradingView subscription)
+data_1s = tv.get_hist('BTCUSDT', 'BINANCE', interval=Interval.in_1_second, n_bars=100)
+
+# Get 5-second interval data
+data_5s = tv.get_hist('ETHUSDT', 'BINANCE', interval=Interval.in_5_second, n_bars=200)
+
+# Get 30-second interval data
+data_30s = tv.get_hist('AAPL', 'NASDAQ', interval=Interval.in_30_second, n_bars=500)
+```
+
+### **Using Token Management System**
+```python
+from tvDatafeed import TvDatafeed, TokenManager
+
+# Automatic token management (recommended)
+tv = TvDatafeed(
+    username='your_username', 
+    password='your_password',
+    token_file='my_token.json'  # Optional: custom token file
+)
+
+# Token is automatically saved and will be reused in future sessions
+# No more frequent CAPTCHA requests!
+
+# Manual token management
+token_manager = TokenManager('custom_token.json')
+
+# Check token info
+token_info = tv.get_token_info()
+if token_info:
+    print(f"Token age: {token_info['age_days']} days")
+
+# Force token refresh if needed
+if tv.refresh_token():
+    print("Token refreshed successfully")
+
+# Delete saved token
+tv.delete_saved_token()
+```
+
+### **CAPTCHA Resolution**
+When TradingView requires CAPTCHA, the library will automatically:
+1. Launch a Chrome browser window
+2. Navigate to TradingView login page
+3. Wait for you to manually solve CAPTCHA and login
+4. Extract the auth token automatically
+5. Continue with data retrieval
+
+```python
+# If CAPTCHA is required, browser will open automatically
+tv = TvDatafeed(username='your_username', password='your_password')
+# Browser opens -> solve CAPTCHA -> login -> token extracted automatically
+```
 
 ---
 
@@ -229,6 +327,22 @@ data=seis.get_hist(n_bars=10, timeout=-1)
 
 Following timeframes intervals are supported-
 
+### 🆕 **Seconds-based intervals (NEW)**
+`Interval.in_1_second`
+
+`Interval.in_5_second`
+
+`Interval.in_10_second`
+
+`Interval.in_15_second`
+
+`Interval.in_30_second`
+
+`Interval.in_45_second`
+
+**⚠️ Important:** Seconds-based intervals (sub-minute timeframes) are only available with a **TradingView subscription** on the provided account. Free accounts are limited to minute-based intervals and above.
+
+### **Minutes-based intervals**
 `Interval.in_1_minute`
 
 `Interval.in_3_minute`
@@ -241,6 +355,7 @@ Following timeframes intervals are supported-
 
 `Interval.in_45_minute`
 
+### **Hours-based intervals**
 `Interval.in_1_hour`
 
 `Interval.in_2_hour`
@@ -249,11 +364,14 @@ Following timeframes intervals are supported-
 
 `Interval.in_4_hour`
 
+### **Daily/Weekly/Monthly intervals**
 `Interval.in_daily`
 
 `Interval.in_weekly`
 
 `Interval.in_monthly`
+
+**Note:** The new seconds-based intervals enable high-frequency data analysis and are particularly useful for scalping strategies and real-time market monitoring.
 
 ---
 
