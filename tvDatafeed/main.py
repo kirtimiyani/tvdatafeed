@@ -12,6 +12,7 @@ from websocket import create_connection
 import requests
 import json
 from bs4 import BeautifulSoup
+from .token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +50,22 @@ class TvDatafeed:
         self,
         username: str = None,
         password: str = None,
+        token_file: str = "tvdatafeed_token.json",
     ) -> None:
         """Create TvDatafeed object
 
         Args:
             username (str, optional): tradingview username. Defaults to None.
             password (str, optional): tradingview password. Defaults to None.
+            token_file (str, optional): path to token file. Defaults to "tvdatafeed_token.json".
         """
 
         self.ws_debug = False
+        self.username = username
+        self.password = password
+        self.token_manager = TokenManager(token_file)
 
-        self.token = self.__auth(username, password)
+        self.token = self.__auth_with_token_management(username, password)
 
         if self.token is None:
             self.token = "unauthorized_user_token"
@@ -71,8 +77,75 @@ class TvDatafeed:
         self.session = self.__generate_session()
         self.chart_session = self.__generate_chart_session()
 
-    def __auth(self, username, password):
+    def __auth_with_token_management(self, username, password):
+        """Аутентификация с управлением токенами"""
+        
+        # Если нет учетных данных, возвращаем None
+        if username is None or password is None:
+            logger.info("Учетные данные не предоставлены, используется режим без авторизации")
+            return None
+        
+        # Пытаемся загрузить сохраненный токен
+        saved_token = self.token_manager.load_token(username)
+        if saved_token:
+            logger.info("Найден сохраненный токен, проверяем его валидность...")
+            
+            # Проверяем валидность токена
+            if self.__is_token_valid(saved_token):
+                logger.info("Сохраненный токен валиден, используем его")
+                return saved_token
+            else:
+                logger.warning("Сохраненный токен недействителен, удаляем его и получаем новый")
+                self.token_manager.delete_token()
+        
+        # Получаем новый токен
+        logger.info("Получаем новый токен...")
+        new_token = self.__auth(username, password)
+        
+        # Сохраняем новый токен, если он получен успешно
+        if new_token and new_token != "unauthorized_user_token":
+            logger.info("Новый токен получен успешно, сохраняем его")
+            self.token_manager.save_token(new_token, username)
+        
+        return new_token
 
+    def __is_token_valid(self, token):
+        """Проверка валидности токена путем тестового запроса"""
+        try:
+            # Создаем тестовое соединение для проверки токена
+            test_ws = create_connection(
+                "wss://data.tradingview.com/socket.io/websocket", 
+                headers=self.__ws_headers, 
+                timeout=self.__ws_timeout
+            )
+            
+            # Отправляем токен для проверки
+            test_message = self.__prepend_header(
+                self.__construct_message("set_auth_token", [token])
+            )
+            test_ws.send(test_message)
+            
+            # Ждем ответ
+            start_time = time.time()
+            while time.time() - start_time < 3:  # Ждем максимум 3 секунды
+                try:
+                    result = test_ws.recv()
+                    # Если получили ответ без ошибки, токен валиден
+                    if result:
+                        test_ws.close()
+                        return True
+                except Exception:
+                    break
+            
+            test_ws.close()
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Ошибка при проверке токена: {e}")
+            return False
+
+    def __auth(self, username, password):
+        """Оригинальный метод аутентификации"""
         if (username is None or password is None):
             token = None
 
@@ -195,13 +268,13 @@ class TvDatafeed:
     @staticmethod
     def __create_df(raw_data, symbol):
         try:
-            out = re.search('"s":\[(.+?)\}\]', raw_data).group(1)
+            out = re.search(r'"s":\[(.+?)\}\]', raw_data).group(1)
             x = out.split(',{"')
             data = list()
             volume_data = True
 
             for xi in x:
-                xi = re.split("\[|:|,|\]", xi)
+                xi = re.split(r"\[|:|,|\]", xi)
                 ts = datetime.datetime.fromtimestamp(float(xi[4]))
 
                 row = [ts]
@@ -364,6 +437,33 @@ class TvDatafeed:
             logger.error(e)
 
         return symbols_list
+
+    def get_token_info(self):
+        """Получить информацию о текущем токене"""
+        return self.token_manager.get_token_info()
+
+    def refresh_token(self):
+        """Принудительно обновить токен"""
+        if self.username and self.password:
+            logger.info("Принудительное обновление токена...")
+            self.token_manager.delete_token()
+            new_token = self.__auth(self.username, self.password)
+            
+            if new_token and new_token != "unauthorized_user_token":
+                self.token_manager.save_token(new_token, self.username)
+                self.token = new_token
+                logger.info("Токен успешно обновлен")
+                return True
+            else:
+                logger.error("Не удалось получить новый токен")
+                return False
+        else:
+            logger.error("Нет учетных данных для обновления токена")
+            return False
+
+    def delete_saved_token(self):
+        """Удалить сохраненный токен"""
+        return self.token_manager.delete_token()
 
 
 if __name__ == "__main__":
