@@ -328,6 +328,7 @@ class TvDatafeed:
         n_bars: int = 10,
         fut_contract: int = None,
         extended_session: bool = False,
+        _retry_count: int = 0,
     ) -> pd.DataFrame:
         """get historical data
 
@@ -338,6 +339,7 @@ class TvDatafeed:
             n_bars (int, optional): no of bars to download, max 5000. Defaults to 10.
             fut_contract (int, optional): None for cash, 1 for continuous current contract in front, 2 for continuous next contract in front . Defaults to None.
             extended_session (bool, optional): regular session if False, extended session if True, Defaults to False.
+            _retry_count (int, optional): internal parameter for retry logic. Defaults to 0.
 
         Returns:
             pd.Dataframe: dataframe with sohlcv as columns
@@ -348,81 +350,120 @@ class TvDatafeed:
 
         interval = interval.value
 
-        self.__create_connection()
+        try:
+            self.__create_connection()
 
-        self.__send_message("set_auth_token", [self.token])
-        self.__send_message("chart_create_session", [self.chart_session, ""])
-        self.__send_message("quote_create_session", [self.session])
-        self.__send_message(
-            "quote_set_fields",
-            [
-                self.session,
-                "ch",
-                "chp",
-                "current_session",
-                "description",
-                "local_description",
-                "language",
-                "exchange",
-                "fractional",
-                "is_tradable",
-                "lp",
-                "lp_time",
-                "minmov",
-                "minmove2",
-                "original_name",
-                "pricescale",
-                "pro_name",
-                "short_name",
-                "type",
-                "update_mode",
-                "volume",
-                "currency_code",
-                "rchp",
-                "rtc",
-            ],
-        )
+            self.__send_message("set_auth_token", [self.token])
+            self.__send_message("chart_create_session", [self.chart_session, ""])
+            self.__send_message("quote_create_session", [self.session])
+            self.__send_message(
+                "quote_set_fields",
+                [
+                    self.session,
+                    "ch",
+                    "chp",
+                    "current_session",
+                    "description",
+                    "local_description",
+                    "language",
+                    "exchange",
+                    "fractional",
+                    "is_tradable",
+                    "lp",
+                    "lp_time",
+                    "minmov",
+                    "minmove2",
+                    "original_name",
+                    "pricescale",
+                    "pro_name",
+                    "short_name",
+                    "type",
+                    "update_mode",
+                    "volume",
+                    "currency_code",
+                    "rchp",
+                    "rtc",
+                ],
+            )
 
-        self.__send_message(
-            "quote_add_symbols", [self.session, symbol,
-                                  {"flags": ["force_permission"]}]
-        )
-        self.__send_message("quote_fast_symbols", [self.session, symbol])
+            self.__send_message(
+                "quote_add_symbols", [self.session, symbol,
+                                      {"flags": ["force_permission"]}]
+            )
+            self.__send_message("quote_fast_symbols", [self.session, symbol])
 
-        self.__send_message(
-            "resolve_symbol",
-            [
-                self.chart_session,
-                "symbol_1",
-                '={"symbol":"'
-                + symbol
-                + '","adjustment":"splits","session":'
-                + ('"regular"' if not extended_session else '"extended"')
-                + "}",
-            ],
-        )
-        self.__send_message(
-            "create_series",
-            [self.chart_session, "s1", "s1", "symbol_1", interval, n_bars],
-        )
-        self.__send_message("switch_timezone", [
-                            self.chart_session, "exchange"])
+            self.__send_message(
+                "resolve_symbol",
+                [
+                    self.chart_session,
+                    "symbol_1",
+                    '={"symbol":"'
+                    + symbol
+                    + '","adjustment":"splits","session":'
+                    + ('"regular"' if not extended_session else '"extended"')
+                    + "}",
+                ],
+            )
+            self.__send_message(
+                "create_series",
+                [self.chart_session, "s1", "s1", "symbol_1", interval, n_bars],
+            )
+            self.__send_message("switch_timezone", [
+                                self.chart_session, "exchange"])
 
-        raw_data = ""
+            raw_data = ""
+            auth_error_detected = False
 
-        logger.debug(f"getting data for {symbol}...")
-        while True:
-            try:
-                result = self.ws.recv()
-                raw_data = raw_data + result + "\n"
-            except Exception as e:
-                logger.error(e)
-                break
+            logger.debug(f"getting data for {symbol}...")
+            while True:
+                try:
+                    result = self.ws.recv()
+                    raw_data = raw_data + result + "\n"
+                    
+                    # Проверяем на ошибки аутентификации
+                    if "critical_error" in result or "auth_error" in result or "unauthorized" in result.lower():
+                        auth_error_detected = True
+                        logger.warning("Обнаружена ошибка аутентификации в ответе сервера")
+                        break
+                        
+                except Exception as e:
+                    logger.error(e)
+                    break
 
-            if "series_completed" in result:
-                break
+                if "series_completed" in result:
+                    break
 
-        return self.__create_df(raw_data, symbol)
+            # Если обнаружена ошибка аутентификации и есть учетные данные для повторной попытки
+            if auth_error_detected and self.username and self.password and _retry_count < 2:
+                logger.info("Попытка обновления токена из-за ошибки аутентификации...")
+                if self.refresh_token():
+                    logger.info("Токен обновлен, повторяем запрос...")
+                    return self.get_hist(symbol, exchange, interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+                else:
+                    logger.error("Не удалось обновить токен")
+
+            result_df = self.__create_df(raw_data, symbol)
+            
+            # Дополнительная проверка: если данные не получены и есть возможность обновить токен
+            if result_df is None and self.username and self.password and _retry_count < 2:
+                logger.warning("Данные не получены, возможно токен истек. Попытка обновления...")
+                if self.refresh_token():
+                    logger.info("Токен обновлен, повторяем запрос...")
+                    return self.get_hist(symbol, exchange, interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
+            return result_df
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении данных: {e}")
+            
+            # Если это ошибка аутентификации и есть возможность обновить токен
+            if ("auth" in str(e).lower() or "unauthorized" in str(e).lower()) and self.username and self.password and _retry_count < 2:
+                logger.info("Обнаружена ошибка аутентификации, попытка обновления токена...")
+                if self.refresh_token():
+                    logger.info("Токен обновлен, повторяем запрос...")
+                    return self.get_hist(symbol, exchange, interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
+            raise e
 
     def search_symbol(self, text: str, exchange: str = ''):
         url = self.__search_url.format(text, exchange)
