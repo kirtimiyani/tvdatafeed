@@ -9,7 +9,7 @@ import os
 # Добавляем путь к модулю
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tvDatafeed'))
 
-from token_manager import TokenManager
+from tvDatafeed import TvDatafeed, TokenManager
 
 def test_token_manager():
     """Тест только TokenManager без зависимостей"""

@@ -45,6 +45,15 @@ class TvDatafeed:
     __ws_headers = json.dumps({"Origin": "https://data.tradingview.com"})
     __signin_headers = {'Referer': 'https://www.tradingview.com'}
     __ws_timeout = 5
+    
+    # Константы для проверки токена
+    __token_validation_timeout = 10
+    __token_validation_wait_time = 5
+    __max_retry_attempts = 2
+    
+    # Константы для сетевых операций
+    __network_retry_attempts = 3
+    __network_retry_delay = 2
 
     def __init__(
         self,
@@ -112,37 +121,71 @@ class TvDatafeed:
     def __is_token_valid(self, token):
         """Проверка валидности токена путем тестового запроса"""
         try:
+            logger.debug("Начинаем проверку валидности токена...")
+            
             # Создаем тестовое соединение для проверки токена
             test_ws = create_connection(
                 "wss://data.tradingview.com/socket.io/websocket", 
                 headers=self.__ws_headers, 
-                timeout=self.__ws_timeout
+                timeout=self.__token_validation_timeout
             )
+            
+            logger.debug("WebSocket соединение для проверки токена создано")
             
             # Отправляем токен для проверки
             test_message = self.__prepend_header(
                 self.__construct_message("set_auth_token", [token])
             )
             test_ws.send(test_message)
+            logger.debug("Токен отправлен для проверки")
             
             # Ждем ответ
             start_time = time.time()
-            while time.time() - start_time < 3:  # Ждем максимум 3 секунды
+            received_response = False
+            auth_error = False
+            
+            while time.time() - start_time < self.__token_validation_wait_time:
                 try:
                     result = test_ws.recv()
-                    # Если получили ответ без ошибки, токен валиден
-                    if result:
+                    received_response = True
+                    logger.debug(f"Получен ответ при проверке токена: {result[:200]}...")
+                    
+                    # Проверяем на ошибки аутентификации
+                    if "critical_error" in result or "auth_error" in result or "unauthorized" in result.lower():
+                        auth_error = True
+                        logger.debug("Обнаружена ошибка аутентификации в ответе")
+                        break
+                    
+                    # Если получили нормальный ответ, токен валиден
+                    if result and not auth_error:
                         test_ws.close()
+                        logger.debug("Токен валиден")
                         return True
-                except Exception:
+                        
+                except Exception as e:
+                    logger.debug(f"Исключение при получении ответа: {e}")
                     break
             
             test_ws.close()
-            return False
+            
+            # Если не получили ответ или была ошибка аутентификации
+            if not received_response:
+                logger.debug("Не получен ответ от сервера при проверке токена")
+                # Если не получили ответ, но и нет явной ошибки, считаем токен валидным
+                # Это может быть из-за проблем с сетью, а не с токеном
+                return True
+            elif auth_error:
+                logger.debug("Токен недействителен из-за ошибки аутентификации")
+                return False
+            else:
+                logger.debug("Токен считается валидным")
+                return True
             
         except Exception as e:
             logger.debug(f"Ошибка при проверке токена: {e}")
-            return False
+            # При ошибке соединения считаем токен валидным
+            # Лучше попробовать использовать токен, чем сразу его удалять
+            return True
 
     def __auth(self, username, password):
         """Оригинальный метод аутентификации"""
@@ -162,10 +205,32 @@ class TvDatafeed:
                 token = None
                 
                 try:
-                    driver = webdriver.Chrome()
+                    # Настройки для ускорения Chrome
+                    chrome_options = webdriver.ChromeOptions()
+                    chrome_options.add_argument('--no-sandbox')
+                    chrome_options.add_argument('--disable-dev-shm-usage')
+                    chrome_options.add_argument('--disable-gpu')
+                    chrome_options.add_argument('--disable-extensions')
+                    chrome_options.add_argument('--disable-plugins')
+                    chrome_options.add_argument('--disable-images')  # Не загружать изображения
+                    chrome_options.add_argument('--disable-web-security')
+                    chrome_options.add_argument('--aggressive-cache-discard')
+                    chrome_options.add_argument('--memory-pressure-off')
+                    chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+                    chrome_options.add_argument('--disable-background-timer-throttling')
+                    chrome_options.add_argument('--disable-renderer-backgrounding')
+                    chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+                    chrome_options.add_argument('--disable-ipc-flooding-protection')
+                    chrome_options.add_experimental_option('useAutomationExtension', False)
+                    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                    
+                    print("Запуск оптимизированного браузера для решения капчи...")
+                    driver = webdriver.Chrome(options=chrome_options)
+                    driver.set_page_load_timeout(15)  # Таймаут загрузки страницы
+                    
+                    print("Загрузка страницы входа...")
                     driver.get(self.__sign_in_url)
                     
-                    time.sleep(2)  
                     print("Пожалуйста, решите капчу и войдите в систему.")
     
                     try:
@@ -344,11 +409,22 @@ class TvDatafeed:
         Returns:
             pd.Dataframe: dataframe with sohlcv as columns
         """
+        logger.debug(f"get_hist called: symbol={symbol}, exchange={exchange}, interval={interval}, n_bars={n_bars}, retry_count={_retry_count}")
+        
+        # Сохраняем оригинальный interval для рекурсивных вызовов
+        original_interval = interval
+        
         symbol = self.__format_symbol(
             symbol=symbol, exchange=exchange, contract=fut_contract
         )
 
-        interval = interval.value
+        # Преобразуем interval в строку для API
+        if hasattr(interval, 'value'):
+            interval_str = interval.value
+        else:
+            # Если interval уже строка (например, при рекурсивном вызове)
+            interval_str = interval
+            logger.debug(f"Interval уже является строкой: {interval_str}")
 
         try:
             self.__create_connection()
@@ -387,8 +463,7 @@ class TvDatafeed:
             )
 
             self.__send_message(
-                "quote_add_symbols", [self.session, symbol,
-                                      {"flags": ["force_permission"]}]
+                "quote_add_symbols", [self.session, symbol]
             )
             self.__send_message("quote_fast_symbols", [self.session, symbol])
 
@@ -406,7 +481,7 @@ class TvDatafeed:
             )
             self.__send_message(
                 "create_series",
-                [self.chart_session, "s1", "s1", "symbol_1", interval, n_bars],
+                [self.chart_session, "s1", "s1", "symbol_1", interval_str, n_bars],
             )
             self.__send_message("switch_timezone", [
                                 self.chart_session, "exchange"])
@@ -420,10 +495,19 @@ class TvDatafeed:
                     result = self.ws.recv()
                     raw_data = raw_data + result + "\n"
                     
-                    # Проверяем на ошибки аутентификации
-                    if "critical_error" in result or "auth_error" in result or "unauthorized" in result.lower():
+                    # Проверяем на ошибки аутентификации и параметров
+                    if "critical_error" in result:
+                        # Проверяем, что это именно ошибка аутентификации, а не параметров
+                        if "invalid_parameters" in result:
+                            logger.warning(f"Обнаружена ошибка параметров (не аутентификации): {result[:500]}...")
+                            # Это ошибка параметров, не аутентификации - продолжаем
+                        else:
+                            auth_error_detected = True
+                            logger.warning(f"Обнаружена критическая ошибка в ответе сервера: {result[:500]}...")
+                            break
+                    elif "auth_error" in result or "unauthorized" in result.lower():
                         auth_error_detected = True
-                        logger.warning("Обнаружена ошибка аутентификации в ответе сервера")
+                        logger.warning(f"Обнаружена ошибка аутентификации в ответе сервера: {result[:500]}...")
                         break
                         
                 except Exception as e:
@@ -434,34 +518,58 @@ class TvDatafeed:
                     break
 
             # Если обнаружена ошибка аутентификации и есть учетные данные для повторной попытки
-            if auth_error_detected and self.username and self.password and _retry_count < 2:
+            if auth_error_detected and self.username and self.password and _retry_count < self.__max_retry_attempts:
                 logger.info("Попытка обновления токена из-за ошибки аутентификации...")
                 if self.refresh_token():
                     logger.info("Токен обновлен, повторяем запрос...")
-                    return self.get_hist(symbol, exchange, interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+                    return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
                 else:
                     logger.error("Не удалось обновить токен")
 
             result_df = self.__create_df(raw_data, symbol)
             
             # Дополнительная проверка: если данные не получены и есть возможность обновить токен
-            if result_df is None and self.username and self.password and _retry_count < 2:
+            if result_df is None and self.username and self.password and _retry_count < self.__max_retry_attempts:
                 logger.warning("Данные не получены, возможно токен истек. Попытка обновления...")
                 if self.refresh_token():
                     logger.info("Токен обновлен, повторяем запрос...")
-                    return self.get_hist(symbol, exchange, interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+                    return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
             
             return result_df
             
         except Exception as e:
+            error_msg = str(e).lower()
             logger.error(f"Ошибка при получении данных: {e}")
             
+            # Проверяем на сетевые ошибки (SSL timeout, connection errors, etc.)
+            network_errors = [
+                "handshake operation timed out",
+                "connection timed out", 
+                "connection refused",
+                "connection reset",
+                "ssl",
+                "timeout",
+                "network"
+            ]
+            
+            is_network_error = any(err in error_msg for err in network_errors)
+            
+            if is_network_error and _retry_count < self.__network_retry_attempts:
+                logger.warning(f"Обнаружена сетевая ошибка, попытка {_retry_count + 1} из {self.__network_retry_attempts}")
+                logger.info(f"Ожидание {self.__network_retry_delay} секунд перед повторной попыткой...")
+                time.sleep(self.__network_retry_delay)
+                return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
             # Если это ошибка аутентификации и есть возможность обновить токен
-            if ("auth" in str(e).lower() or "unauthorized" in str(e).lower()) and self.username and self.password and _retry_count < 2:
+            elif ("auth" in error_msg or "unauthorized" in error_msg) and self.username and self.password and _retry_count < self.__max_retry_attempts:
                 logger.info("Обнаружена ошибка аутентификации, попытка обновления токена...")
                 if self.refresh_token():
                     logger.info("Токен обновлен, повторяем запрос...")
-                    return self.get_hist(symbol, exchange, interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+                    return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
+            # Если исчерпаны все попытки или это не сетевая/аутентификационная ошибка
+            if is_network_error and _retry_count >= self.__network_retry_attempts:
+                logger.error(f"Исчерпаны все попытки ({self.__network_retry_attempts}) для устранения сетевой ошибки")
             
             raise e
 
