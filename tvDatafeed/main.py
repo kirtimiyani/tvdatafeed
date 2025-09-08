@@ -12,6 +12,7 @@ from websocket import create_connection
 import requests
 import json
 from bs4 import BeautifulSoup
+from .token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,22 +45,36 @@ class TvDatafeed:
     __ws_headers = json.dumps({"Origin": "https://data.tradingview.com"})
     __signin_headers = {'Referer': 'https://www.tradingview.com'}
     __ws_timeout = 5
+    
+    # Константы для проверки токена
+    __token_validation_timeout = 10
+    __token_validation_wait_time = 5
+    __max_retry_attempts = 2
+    
+    # Константы для сетевых операций
+    __network_retry_attempts = 3
+    __network_retry_delay = 2
 
     def __init__(
         self,
         username: str = None,
         password: str = None,
+        token_file: str = "tvdatafeed_token.json",
     ) -> None:
         """Create TvDatafeed object
 
         Args:
             username (str, optional): tradingview username. Defaults to None.
             password (str, optional): tradingview password. Defaults to None.
+            token_file (str, optional): path to token file. Defaults to "tvdatafeed_token.json".
         """
 
         self.ws_debug = False
+        self.username = username
+        self.password = password
+        self.token_manager = TokenManager(token_file)
 
-        self.token = self.__auth(username, password)
+        self.token = self.__auth_with_token_management(username, password)
 
         if self.token is None:
             self.token = "unauthorized_user_token"
@@ -71,8 +86,109 @@ class TvDatafeed:
         self.session = self.__generate_session()
         self.chart_session = self.__generate_chart_session()
 
-    def __auth(self, username, password):
+    def __auth_with_token_management(self, username, password):
+        """Аутентификация с управлением токенами"""
+        
+        # Если нет учетных данных, возвращаем None
+        if username is None or password is None:
+            logger.info("Учетные данные не предоставлены, используется режим без авторизации")
+            return None
+        
+        # Пытаемся загрузить сохраненный токен
+        saved_token = self.token_manager.load_token(username)
+        if saved_token:
+            logger.info("Найден сохраненный токен, проверяем его валидность...")
+            
+            # Проверяем валидность токена
+            if self.__is_token_valid(saved_token):
+                logger.info("Сохраненный токен валиден, используем его")
+                return saved_token
+            else:
+                logger.warning("Сохраненный токен недействителен, удаляем его и получаем новый")
+                self.token_manager.delete_token()
+        
+        # Получаем новый токен
+        logger.info("Получаем новый токен...")
+        new_token = self.__auth(username, password)
+        
+        # Сохраняем новый токен, если он получен успешно
+        if new_token and new_token != "unauthorized_user_token":
+            logger.info("Новый токен получен успешно, сохраняем его")
+            self.token_manager.save_token(new_token, username)
+        
+        return new_token
 
+    def __is_token_valid(self, token):
+        """Проверка валидности токена путем тестового запроса"""
+        try:
+            logger.debug("Начинаем проверку валидности токена...")
+            
+            # Создаем тестовое соединение для проверки токена
+            test_ws = create_connection(
+                "wss://data.tradingview.com/socket.io/websocket", 
+                headers=self.__ws_headers, 
+                timeout=self.__token_validation_timeout
+            )
+            
+            logger.debug("WebSocket соединение для проверки токена создано")
+            
+            # Отправляем токен для проверки
+            test_message = self.__prepend_header(
+                self.__construct_message("set_auth_token", [token])
+            )
+            test_ws.send(test_message)
+            logger.debug("Токен отправлен для проверки")
+            
+            # Ждем ответ
+            start_time = time.time()
+            received_response = False
+            auth_error = False
+            
+            while time.time() - start_time < self.__token_validation_wait_time:
+                try:
+                    result = test_ws.recv()
+                    received_response = True
+                    logger.debug(f"Получен ответ при проверке токена: {result[:200]}...")
+                    
+                    # Проверяем на ошибки аутентификации
+                    if "critical_error" in result or "auth_error" in result or "unauthorized" in result.lower():
+                        auth_error = True
+                        logger.debug("Обнаружена ошибка аутентификации в ответе")
+                        break
+                    
+                    # Если получили нормальный ответ, токен валиден
+                    if result and not auth_error:
+                        test_ws.close()
+                        logger.debug("Токен валиден")
+                        return True
+                        
+                except Exception as e:
+                    logger.debug(f"Исключение при получении ответа: {e}")
+                    break
+            
+            test_ws.close()
+            
+            # Если не получили ответ или была ошибка аутентификации
+            if not received_response:
+                logger.debug("Не получен ответ от сервера при проверке токена")
+                # Если не получили ответ, но и нет явной ошибки, считаем токен валидным
+                # Это может быть из-за проблем с сетью, а не с токеном
+                return True
+            elif auth_error:
+                logger.debug("Токен недействителен из-за ошибки аутентификации")
+                return False
+            else:
+                logger.debug("Токен считается валидным")
+                return True
+            
+        except Exception as e:
+            logger.debug(f"Ошибка при проверке токена: {e}")
+            # При ошибке соединения считаем токен валидным
+            # Лучше попробовать использовать токен, чем сразу его удалять
+            return True
+
+    def __auth(self, username, password):
+        """Оригинальный метод аутентификации"""
         if (username is None or password is None):
             token = None
 
@@ -195,13 +311,13 @@ class TvDatafeed:
     @staticmethod
     def __create_df(raw_data, symbol):
         try:
-            out = re.search('"s":\[(.+?)\}\]', raw_data).group(1)
+            out = re.search(r'"s":\[(.+?)\}\]', raw_data).group(1)
             x = out.split(',{"')
             data = list()
             volume_data = True
 
             for xi in x:
-                xi = re.split("\[|:|,|\]", xi)
+                xi = re.split(r"\[|:|,|\]", xi)
                 ts = datetime.datetime.fromtimestamp(float(xi[4]))
 
                 row = [ts]
@@ -255,6 +371,7 @@ class TvDatafeed:
         n_bars: int = 10,
         fut_contract: int = None,
         extended_session: bool = False,
+        _retry_count: int = 0,
     ) -> pd.DataFrame:
         """get historical data
 
@@ -265,91 +382,174 @@ class TvDatafeed:
             n_bars (int, optional): no of bars to download, max 5000. Defaults to 10.
             fut_contract (int, optional): None for cash, 1 for continuous current contract in front, 2 for continuous next contract in front . Defaults to None.
             extended_session (bool, optional): regular session if False, extended session if True, Defaults to False.
+            _retry_count (int, optional): internal parameter for retry logic. Defaults to 0.
 
         Returns:
             pd.Dataframe: dataframe with sohlcv as columns
         """
+        logger.debug(f"get_hist called: symbol={symbol}, exchange={exchange}, interval={interval}, n_bars={n_bars}, retry_count={_retry_count}")
+        
+        # Сохраняем оригинальный interval для рекурсивных вызовов
+        original_interval = interval
+        
         symbol = self.__format_symbol(
             symbol=symbol, exchange=exchange, contract=fut_contract
         )
 
-        interval = interval.value
+        # Преобразуем interval в строку для API
+        if hasattr(interval, 'value'):
+            interval_str = interval.value
+        else:
+            # Если interval уже строка (например, при рекурсивном вызове)
+            interval_str = interval
+            logger.debug(f"Interval уже является строкой: {interval_str}")
 
-        self.__create_connection()
+        try:
+            self.__create_connection()
 
-        self.__send_message("set_auth_token", [self.token])
-        self.__send_message("chart_create_session", [self.chart_session, ""])
-        self.__send_message("quote_create_session", [self.session])
-        self.__send_message(
-            "quote_set_fields",
-            [
-                self.session,
-                "ch",
-                "chp",
-                "current_session",
-                "description",
-                "local_description",
-                "language",
-                "exchange",
-                "fractional",
-                "is_tradable",
-                "lp",
-                "lp_time",
-                "minmov",
-                "minmove2",
-                "original_name",
-                "pricescale",
-                "pro_name",
-                "short_name",
-                "type",
-                "update_mode",
-                "volume",
-                "currency_code",
-                "rchp",
-                "rtc",
-            ],
-        )
+            self.__send_message("set_auth_token", [self.token])
+            self.__send_message("chart_create_session", [self.chart_session, ""])
+            self.__send_message("quote_create_session", [self.session])
+            self.__send_message(
+                "quote_set_fields",
+                [
+                    self.session,
+                    "ch",
+                    "chp",
+                    "current_session",
+                    "description",
+                    "local_description",
+                    "language",
+                    "exchange",
+                    "fractional",
+                    "is_tradable",
+                    "lp",
+                    "lp_time",
+                    "minmov",
+                    "minmove2",
+                    "original_name",
+                    "pricescale",
+                    "pro_name",
+                    "short_name",
+                    "type",
+                    "update_mode",
+                    "volume",
+                    "currency_code",
+                    "rchp",
+                    "rtc",
+                ],
+            )
 
-        self.__send_message(
-            "quote_add_symbols", [self.session, symbol,
-                                  {"flags": ["force_permission"]}]
-        )
-        self.__send_message("quote_fast_symbols", [self.session, symbol])
+            self.__send_message(
+                "quote_add_symbols", [self.session, symbol]
+            )
+            self.__send_message("quote_fast_symbols", [self.session, symbol])
 
-        self.__send_message(
-            "resolve_symbol",
-            [
-                self.chart_session,
-                "symbol_1",
-                '={"symbol":"'
-                + symbol
-                + '","adjustment":"splits","session":'
-                + ('"regular"' if not extended_session else '"extended"')
-                + "}",
-            ],
-        )
-        self.__send_message(
-            "create_series",
-            [self.chart_session, "s1", "s1", "symbol_1", interval, n_bars],
-        )
-        self.__send_message("switch_timezone", [
-                            self.chart_session, "exchange"])
+            self.__send_message(
+                "resolve_symbol",
+                [
+                    self.chart_session,
+                    "symbol_1",
+                    '={"symbol":"'
+                    + symbol
+                    + '","adjustment":"splits","session":'
+                    + ('"regular"' if not extended_session else '"extended"')
+                    + "}",
+                ],
+            )
+            self.__send_message(
+                "create_series",
+                [self.chart_session, "s1", "s1", "symbol_1", interval_str, n_bars],
+            )
+            self.__send_message("switch_timezone", [
+                                self.chart_session, "exchange"])
 
-        raw_data = ""
+            raw_data = ""
+            auth_error_detected = False
 
-        logger.debug(f"getting data for {symbol}...")
-        while True:
-            try:
-                result = self.ws.recv()
-                raw_data = raw_data + result + "\n"
-            except Exception as e:
-                logger.error(e)
-                break
+            logger.debug(f"getting data for {symbol}...")
+            while True:
+                try:
+                    result = self.ws.recv()
+                    raw_data = raw_data + result + "\n"
+                    
+                    # Проверяем на ошибки аутентификации и параметров
+                    if "critical_error" in result:
+                        # Проверяем, что это именно ошибка аутентификации, а не параметров
+                        if "invalid_parameters" in result:
+                            logger.warning(f"Обнаружена ошибка параметров (не аутентификации): {result[:500]}...")
+                            # Это ошибка параметров, не аутентификации - продолжаем
+                        else:
+                            auth_error_detected = True
+                            logger.warning(f"Обнаружена критическая ошибка в ответе сервера: {result[:500]}...")
+                            break
+                    elif "auth_error" in result or "unauthorized" in result.lower():
+                        auth_error_detected = True
+                        logger.warning(f"Обнаружена ошибка аутентификации в ответе сервера: {result[:500]}...")
+                        break
+                        
+                except Exception as e:
+                    logger.error(e)
+                    break
 
-            if "series_completed" in result:
-                break
+                if "series_completed" in result:
+                    break
 
-        return self.__create_df(raw_data, symbol)
+            # Если обнаружена ошибка аутентификации и есть учетные данные для повторной попытки
+            if auth_error_detected and self.username and self.password and _retry_count < self.__max_retry_attempts:
+                logger.info("Попытка обновления токена из-за ошибки аутентификации...")
+                if self.refresh_token():
+                    logger.info("Токен обновлен, повторяем запрос...")
+                    return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+                else:
+                    logger.error("Не удалось обновить токен")
+
+            result_df = self.__create_df(raw_data, symbol)
+            
+            # Дополнительная проверка: если данные не получены и есть возможность обновить токен
+            if result_df is None and self.username and self.password and _retry_count < self.__max_retry_attempts:
+                logger.warning("Данные не получены, возможно токен истек. Попытка обновления...")
+                if self.refresh_token():
+                    logger.info("Токен обновлен, повторяем запрос...")
+                    return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
+            return result_df
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            logger.error(f"Ошибка при получении данных: {e}")
+            
+            # Проверяем на сетевые ошибки (SSL timeout, connection errors, etc.)
+            network_errors = [
+                "handshake operation timed out",
+                "connection timed out", 
+                "connection refused",
+                "connection reset",
+                "ssl",
+                "timeout",
+                "network"
+            ]
+            
+            is_network_error = any(err in error_msg for err in network_errors)
+            
+            if is_network_error and _retry_count < self.__network_retry_attempts:
+                logger.warning(f"Обнаружена сетевая ошибка, попытка {_retry_count + 1} из {self.__network_retry_attempts}")
+                logger.info(f"Ожидание {self.__network_retry_delay} секунд перед повторной попыткой...")
+                time.sleep(self.__network_retry_delay)
+                return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
+            # Если это ошибка аутентификации и есть возможность обновить токен
+            elif ("auth" in error_msg or "unauthorized" in error_msg) and self.username and self.password and _retry_count < self.__max_retry_attempts:
+                logger.info("Обнаружена ошибка аутентификации, попытка обновления токена...")
+                if self.refresh_token():
+                    logger.info("Токен обновлен, повторяем запрос...")
+                    return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
+            
+            # Если исчерпаны все попытки или это не сетевая/аутентификационная ошибка
+            if is_network_error and _retry_count >= self.__network_retry_attempts:
+                logger.error(f"Исчерпаны все попытки ({self.__network_retry_attempts}) для устранения сетевой ошибки")
+            
+            raise e
 
     def search_symbol(self, text: str, exchange: str = ''):
         url = self.__search_url.format(text, exchange)
@@ -364,6 +564,33 @@ class TvDatafeed:
             logger.error(e)
 
         return symbols_list
+
+    def get_token_info(self):
+        """Получить информацию о текущем токене"""
+        return self.token_manager.get_token_info()
+
+    def refresh_token(self):
+        """Принудительно обновить токен"""
+        if self.username and self.password:
+            logger.info("Принудительное обновление токена...")
+            self.token_manager.delete_token()
+            new_token = self.__auth(self.username, self.password)
+            
+            if new_token and new_token != "unauthorized_user_token":
+                self.token_manager.save_token(new_token, self.username)
+                self.token = new_token
+                logger.info("Токен успешно обновлен")
+                return True
+            else:
+                logger.error("Не удалось получить новый токен")
+                return False
+        else:
+            logger.error("Нет учетных данных для обновления токена")
+            return False
+
+    def delete_saved_token(self):
+        """Удалить сохраненный токен"""
+        return self.token_manager.delete_token()
 
 
 if __name__ == "__main__":
