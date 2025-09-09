@@ -4,4 +4,4 @@ from .datafeed import TvDatafeedLive
 from .consumer import Consumer
 from .token_manager import TokenManager
 
-__version__ = "2.1.0"
+__version__ = "3.0.1"

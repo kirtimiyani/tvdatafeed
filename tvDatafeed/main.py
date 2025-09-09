@@ -224,17 +224,13 @@ class TvDatafeed:
                         return None
                         
                     # Получение HTML-кода страницы
-                    print("CHECKPOINT 1")
                     html = driver.page_source
                     driver.quit() # Закрытие браузера
-                    print("CHECKPOINT 2")
                     # Парсинг HTML для извлечения auth_token
                     soup = BeautifulSoup(html, 'html.parser')
-                    print("CHECKPOINT 2.5")
     
                     # Пример поиска токена в скриптах
                     script_tags = soup.find_all('script')
-                    print("CHECKPOINT 3")
                     for script in script_tags:
                         if 'auth_token' in script.text:
                             # Пример извлечения токена
