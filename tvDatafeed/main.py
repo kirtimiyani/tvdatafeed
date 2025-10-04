@@ -41,17 +41,18 @@ class Interval(enum.Enum):
 
 class TvDatafeed:
     __sign_in_url = 'https://www.tradingview.com/accounts/signin/'
-    __search_url = 'https://symbol-search.tradingview.com/symbol_search/?text={}&hl=1&exchange={}&lang=en&type=&domain=production'
+    __search_url = 'https://symbol-search.tradingview.com/symbol_search/v3/?text={}&hl=1&exchange={}&lang=en&search_type=undefined&domain=production&sort_by_country=IN'
     __ws_headers = json.dumps({"Origin": "https://data.tradingview.com"})
     __signin_headers = {'Referer': 'https://www.tradingview.com'}
     __ws_timeout = 5
     
-    # Константы для проверки токена
+    # Constants for token verification
+
     __token_validation_timeout = 10
     __token_validation_wait_time = 5
     __max_retry_attempts = 2
     
-    # Константы для сетевых операций
+    # Constants for network operations
     __network_retry_attempts = 3
     __network_retry_delay = 2
 
@@ -87,59 +88,60 @@ class TvDatafeed:
         self.chart_session = self.__generate_chart_session()
 
     def __auth_with_token_management(self, username, password):
-        """Аутентификация с управлением токенами"""
-        
-        # Если нет учетных данных, возвращаем None
+        """Authentication with token management"""
+
+        # Attempt to load the saved token
+
         if username is None or password is None:
-            logger.info("Учетные данные не предоставлены, используется режим без авторизации")
+            logger.info("Credentials not provided, using unauthorized mode")
             return None
         
-        # Пытаемся загрузить сохраненный токен
+        # Attempt to load the saved token
         saved_token = self.token_manager.load_token(username)
         if saved_token:
-            logger.info("Найден сохраненный токен, проверяем его валидность...")
+            logger.info("A saved token has been found, we're checking its validity...")
             
-            # Проверяем валидность токена
+            # Check the token's validity
             if self.__is_token_valid(saved_token):
-                logger.info("Сохраненный токен валиден, используем его")
+                logger.info("The saved token is valid, let's use it")
                 return saved_token
             else:
-                logger.warning("Сохраненный токен недействителен, удаляем его и получаем новый")
+                logger.warning("The saved token is invalid, delete it and get a new one")
                 self.token_manager.delete_token()
         
-        # Получаем новый токен
-        logger.info("Получаем новый токен...")
+        # Receive a new token
+        logger.info("Getting a new token...")
         new_token = self.__auth(username, password)
         
-        # Сохраняем новый токен, если он получен успешно
+        # Save the new token if it was received successfully
         if new_token and new_token != "unauthorized_user_token":
-            logger.info("Новый токен получен успешно, сохраняем его")
+            logger.info("The new token has been received successfully, let's save it.")
             self.token_manager.save_token(new_token, username)
         
         return new_token
 
     def __is_token_valid(self, token):
-        """Проверка валидности токена путем тестового запроса"""
+        """Checking the validity of the token via a test request"""
         try:
-            logger.debug("Начинаем проверку валидности токена...")
+            logger.debug("We are starting to check the token validity...")
             
-            # Создаем тестовое соединение для проверки токена
+            # Create a test connection to verify the token
             test_ws = create_connection(
                 "wss://data.tradingview.com/socket.io/websocket", 
                 headers=self.__ws_headers, 
                 timeout=self.__token_validation_timeout
             )
             
-            logger.debug("WebSocket соединение для проверки токена создано")
+            logger.debug("A WebSocket connection for token verification has been created.")
             
-            # Отправляем токен для проверки
+            # Send the token for verification
             test_message = self.__prepend_header(
                 self.__construct_message("set_auth_token", [token])
             )
             test_ws.send(test_message)
-            logger.debug("Токен отправлен для проверки")
+            logger.debug("The token has been sent for verification.")
             
-            # Ждем ответ
+            # Wait for a response
             start_time = time.time()
             received_response = False
             auth_error = False
@@ -148,47 +150,47 @@ class TvDatafeed:
                 try:
                     result = test_ws.recv()
                     received_response = True
-                    logger.debug(f"Получен ответ при проверке токена: {result[:200]}...")
+                    logger.debug(f"Response received while verifying token: {result[:200]}...")
                     
-                    # Проверяем на ошибки аутентификации
+                    # Check for authentication errors
                     if "critical_error" in result or "auth_error" in result or "unauthorized" in result.lower():
                         auth_error = True
-                        logger.debug("Обнаружена ошибка аутентификации в ответе")
+                        logger.debug("An authentication error was detected in the response.")
                         break
                     
-                    # Если получили нормальный ответ, токен валиден
+                    # If you received a normal response, the token is valid.
                     if result and not auth_error:
                         test_ws.close()
-                        logger.debug("Токен валиден")
+                        logger.debug("Token valid")
                         return True
                         
                 except Exception as e:
-                    logger.debug(f"Исключение при получении ответа: {e}")
+                    logger.debug(f"Exception while receiving response: {e}")
                     break
             
             test_ws.close()
             
-            # Если не получили ответ или была ошибка аутентификации
+            # If we didn't receive a response or there was an authentication error
             if not received_response:
-                logger.debug("Не получен ответ от сервера при проверке токена")
-                # Если не получили ответ, но и нет явной ошибки, считаем токен валидным
-                # Это может быть из-за проблем с сетью, а не с токеном
+                logger.debug("No response received from the server when verifying the token")
+                # If we didn't receive a response, but there was no obvious error, we consider the token valid.
+                # This could be due to network issues, not token issues.
                 return True
             elif auth_error:
-                logger.debug("Токен недействителен из-за ошибки аутентификации")
+                logger.debug("The token is invalid due to an authentication error.")
                 return False
             else:
-                logger.debug("Токен считается валидным")
+                logger.debug("The token is considered valid")
                 return True
             
         except Exception as e:
-            logger.debug(f"Ошибка при проверке токена: {e}")
-            # При ошибке соединения считаем токен валидным
-            # Лучше попробовать использовать токен, чем сразу его удалять
+            logger.debug(f"Error validating token: {e}")
+            # If a connection error occurs, consider the token valid.
+            # It's better to try using the token than to delete it immediately.
             return True
 
     def __auth(self, username, password):
-        """Оригинальный метод аутентификации"""
+        """Original authentication method"""
         if (username is None or password is None):
             token = None
 
@@ -200,6 +202,7 @@ class TvDatafeed:
                 response = requests.post(
                     url=self.__sign_in_url, data=data, headers=self.__signin_headers)
                 token = response.json()['user']['auth_token']
+                print(token)
             except Exception as e:
                 logger.error('Captha required, please singin manually')
                 token = None
@@ -209,50 +212,53 @@ class TvDatafeed:
                     driver.get(self.__sign_in_url)
                     
                     time.sleep(2)  
-                    print("Пожалуйста, решите капчу и войдите в систему.")
+                    print("Please solve the captcha and sign in.")
     
                     try:
                         while True:
                             current_url = driver.current_url
-                            if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/"]:
-                                print("Успешный вход в систему!")
+                            if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/", "https://in.tradingview.com/"]:
+                                print("Successful login!")
                                 break
-                            time.sleep(1)  # Проверяем каждые 1 секунду
+                            time.sleep(1)  # Check every 1 second
+
                     except Exception as e:
-                        logger.error("Ошибка при проверке URL: %s", str(e))
+                        logger.error("Error validating URL: %s", str(e))
                         driver.quit()
                         return None
                         
-                    # Получение HTML-кода страницы
+                    # Getting page HTML
                     html = driver.page_source
-                    driver.quit() # Закрытие браузера
-                    # Парсинг HTML для извлечения auth_token
+                    driver.quit() # Closing browser
+                    # Parsing HTML to extract auth_token
                     soup = BeautifulSoup(html, 'html.parser')
     
                     # Пример поиска токена в скриптах
                     script_tags = soup.find_all('script')
                     for script in script_tags:
                         if 'auth_token' in script.text:
-                            # Пример извлечения токена
+                            # Token retrieval example
+
                             try:
-                                # Предположим, что токен представлен как 'auth_token":"YOUR_TOKEN"
+                                # Assume the token is represented as 'auth_token":"YOUR_TOKEN"
                                 start = script.text.find('auth_token":"') + len('auth_token":"')
                                 end = script.text.find('"', start)
                                 token = script.text[start:end]
-                                logger.info("Найден auth_token: %s", token)
+                                logger.info("Found auth_token: %s", token)
+                                print("Found auth_token success")
                                 return token
                             except Exception as e:
-                                logger.error("Ошибка при извлечении токена: %s", str(e))
+                                logger.error("Error retrieving token: %s", str(e))
                                 return None
             
-                    logger.error("auth_token не найден на странице.")
+                    logger.error("auth_token not found on the page.")
                     return None
     
                 except Exception as e:
                     print("ERROR:", str(e))
                     logger.error('error while signin')
                     token = None
-    
+            print("token retrived successfully")
             return token
 
     def __create_connection(self):
@@ -396,9 +402,9 @@ class TvDatafeed:
         if hasattr(interval, 'value'):
             interval_str = interval.value
         else:
-            # Если interval уже строка (например, при рекурсивном вызове)
+            # If interval is already a string (for example, during a recursive call)
             interval_str = interval
-            logger.debug(f"Interval уже является строкой: {interval_str}")
+            logger.debug(f"Interval is already a string: {interval_str}")
 
         try:
             self.__create_connection()
@@ -469,19 +475,19 @@ class TvDatafeed:
                     result = self.ws.recv()
                     raw_data = raw_data + result + "\n"
                     
-                    # Проверяем на ошибки аутентификации и параметров
+                    # Checking for authentication and parameter errors
                     if "critical_error" in result:
-                        # Проверяем, что это именно ошибка аутентификации, а не параметров
+                        # Checking that this is an authentication error, not a parameter error
                         if "invalid_parameters" in result:
-                            logger.warning(f"Обнаружена ошибка параметров (не аутентификации): {result[:500]}...")
-                            # Это ошибка параметров, не аутентификации - продолжаем
+                            logger.warning(f"A parameter error (not authentication) was detected: {result[:500]}...")
+                            # This is a parameter error, not an authentication error - continue
                         else:
                             auth_error_detected = True
-                            logger.warning(f"Обнаружена критическая ошибка в ответе сервера: {result[:500]}...")
+                            logger.warning(f"A critical error was detected in the server response: {result[:500]}...")
                             break
                     elif "auth_error" in result or "unauthorized" in result.lower():
                         auth_error_detected = True
-                        logger.warning(f"Обнаружена ошибка аутентификации в ответе сервера: {result[:500]}...")
+                        logger.warning(f"An authentication error was detected in the server response: {result[:500]}...")
                         break
                         
                 except Exception as e:
@@ -491,31 +497,33 @@ class TvDatafeed:
                 if "series_completed" in result:
                     break
 
-            # Если обнаружена ошибка аутентификации и есть учетные данные для повторной попытки
+            # If an authentication error was detected and credentials are available for a retry
+
             if auth_error_detected and self.username and self.password and _retry_count < self.__max_retry_attempts:
-                logger.info("Попытка обновления токена из-за ошибки аутентификации...")
+                logger.info("Attempt to refresh the token due to an authentication error...")
                 if self.refresh_token():
-                    logger.info("Токен обновлен, повторяем запрос...")
+                    logger.info("The token has been refreshed, retrying the request...")
                     return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
                 else:
-                    logger.error("Не удалось обновить токен")
+                    logger.error("Failed to refresh the token")
 
             result_df = self.__create_df(raw_data, symbol)
             
-            # Дополнительная проверка: если данные не получены и есть возможность обновить токен
+            # Additional check: if data was not received and the token can be refreshed
+
             if result_df is None and self.username and self.password and _retry_count < self.__max_retry_attempts:
-                logger.warning("Данные не получены, возможно токен истек. Попытка обновления...")
+                logger.warning("Data was not received; the token may have expired. Attempting to refresh...")
                 if self.refresh_token():
-                    logger.info("Токен обновлен, повторяем запрос...")
+                    logger.info("Token updated, repeating the request...")
                     return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
             
             return result_df
             
         except Exception as e:
             error_msg = str(e).lower()
-            logger.error(f"Ошибка при получении данных: {e}")
+            logger.error(f"Error receiving data: {e}")
             
-            # Проверяем на сетевые ошибки (SSL timeout, connection errors, etc.)
+            # Checking for network errors (SSL timeout, connection errors, etc.)
             network_errors = [
                 "handshake operation timed out",
                 "connection timed out", 
@@ -529,21 +537,22 @@ class TvDatafeed:
             is_network_error = any(err in error_msg for err in network_errors)
             
             if is_network_error and _retry_count < self.__network_retry_attempts:
-                logger.warning(f"Обнаружена сетевая ошибка, попытка {_retry_count + 1} из {self.__network_retry_attempts}")
-                logger.info(f"Ожидание {self.__network_retry_delay} секунд перед повторной попыткой...")
+                logger.warning(f"A network error was detected, attempting {_retry_count + 1} of {self.__network_retry_attempts}")
+                logger.info(f"Waiting {self.__network_retry_delay} seconds before retrying...")
                 time.sleep(self.__network_retry_delay)
                 return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
             
-            # Если это ошибка аутентификации и есть возможность обновить токен
+            # If this is an authentication error and it is possible to refresh the token
+
             elif ("auth" in error_msg or "unauthorized" in error_msg) and self.username and self.password and _retry_count < self.__max_retry_attempts:
-                logger.info("Обнаружена ошибка аутентификации, попытка обновления токена...")
+                logger.info("Authentication error detected, attempting to refresh the token...")
                 if self.refresh_token():
-                    logger.info("Токен обновлен, повторяем запрос...")
+                    logger.info("Token updated, repeating the request...")
                     return self.get_hist(symbol, exchange, original_interval, n_bars, fut_contract, extended_session, _retry_count + 1)
             
-            # Если исчерпаны все попытки или это не сетевая/аутентификационная ошибка
+            # If all attempts have been exhausted or it is not a network/authentication error
             if is_network_error and _retry_count >= self.__network_retry_attempts:
-                logger.error(f"Исчерпаны все попытки ({self.__network_retry_attempts}) для устранения сетевой ошибки")
+                logger.error(f"All attempts ({self.__network_retry_attempts}) to resolve a network error have been exhausted")
             
             raise e
 
@@ -552,40 +561,57 @@ class TvDatafeed:
 
         symbols_list = []
         try:
-            resp = requests.get(url)
-
-            symbols_list = json.loads(resp.text.replace(
-                '</em>', '').replace('<em>', ''))
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Accept-Language": "en-US,en;q=0.9",
+                "DNT": "1",
+                "Origin": "https://in.tradingview.com",
+                "Referer": "https://in.tradingview.com/",
+                "Sec-CH-UA": '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+            }
+              
+            resp = requests.get(url, headers=headers)
+            
+            symbols_list = json.loads(resp.text.replace('</em>', '').replace('<em>', ''))
         except Exception as e:
             logger.error(e)
 
         return symbols_list
 
     def get_token_info(self):
-        """Получить информацию о текущем токене"""
+        """Get information about the current token
+"""
         return self.token_manager.get_token_info()
 
     def refresh_token(self):
-        """Принудительно обновить токен"""
+        """Force refresh token"""
         if self.username and self.password:
-            logger.info("Принудительное обновление токена...")
+            logger.info("Forced token refresh...")
             self.token_manager.delete_token()
             new_token = self.__auth(self.username, self.password)
             
             if new_token and new_token != "unauthorized_user_token":
                 self.token_manager.save_token(new_token, self.username)
                 self.token = new_token
-                logger.info("Токен успешно обновлен")
+                logger.info("Token successfully refreshed")
                 return True
             else:
-                logger.error("Не удалось получить новый токен")
+                logger.error("Failed to obtain a new token")
                 return False
         else:
-            logger.error("Нет учетных данных для обновления токена")
+            logger.error("No credentials to refresh the token")
             return False
 
     def delete_saved_token(self):
-        """Удалить сохраненный токен"""
+        """Delete saved token"""
+
         return self.token_manager.delete_token()
 
 
