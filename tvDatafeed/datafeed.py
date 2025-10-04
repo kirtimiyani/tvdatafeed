@@ -192,8 +192,9 @@ class TvDatafeedLive(tvDatafeed.TvDatafeed):
         
         if not result_list: # if does not exists then empty
             return True
-        
-        for item in result_list:
+        # print(result_list['symbols'])
+        for item in result_list['symbols']:
+            # print(item)
             if item['symbol']==symbol and item['exchange']==exchange:
                 return False
         
