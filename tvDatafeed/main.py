@@ -13,6 +13,7 @@ import requests
 import json
 from bs4 import BeautifulSoup
 from .token_manager import TokenManager
+from base.models import ProjectSettings
 
 logger = logging.getLogger(__name__)
 
@@ -208,18 +209,36 @@ class TvDatafeed:
                 token = None
                 
                 try:
-                    driver = webdriver.Chrome()
+                    # for runnning loaclly
+                    
+                    # driver = webdriver.Chrome()
+                    
+                    # for running on server
+                    pc_ip = ProjectSettings.objects.get(key="pc_ip").value
+                    options = webdriver.ChromeOptions()
+                    driver = webdriver.Remote(
+                        command_executor="http://"+pc_ip+":4444/wd/hub",
+                        options=options
+                    )
+                    
                     driver.get(self.__sign_in_url)
                     
                     time.sleep(2)  
                     print("Please solve the captcha and sign in.")
     
                     try:
+                        start_time = time.time()
                         while True:
                             current_url = driver.current_url
                             if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/", "https://in.tradingview.com/"]:
                                 print("Successful login!")
                                 break
+                            
+                            # stop after 60 seconds
+                            if time.time() - start_time > 60:
+                                print("Timeout waiting for login")
+                                driver.quit()
+                                return None
                             time.sleep(1)  # Check every 1 second
 
                     except Exception as e:
