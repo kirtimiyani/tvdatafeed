@@ -210,18 +210,18 @@ class TvDatafeed:
                 token = None
                 
                 try:
-                    if config('CHANNELS_CONFIG') == "REDIS":
-                    # for runnning loaclly
-                        driver = webdriver.Chrome()
+                    # if config('CHANNELS_CONFIG') == "REDIS":
+                    # # for runnning loaclly
+                    #     driver = webdriver.Chrome()
 
-                    else:                    
+                    # else:                    
                     # for running on server
-                        pc_ip = ProjectSettings.objects.get(key="pc_ip").value
-                        options = webdriver.ChromeOptions()
-                        driver = webdriver.Remote(
-                            command_executor="http://"+pc_ip+":4444/wd/hub",
-                            options=options
-                        )
+                    pc_ip = ProjectSettings.objects.get(key="pc_ip").value
+                    options = webdriver.ChromeOptions()
+                    driver = webdriver.Remote(
+                        command_executor="http://"+pc_ip+":4444/wd/hub",
+                        options=options
+                    )
                     
                     driver.get(self.__sign_in_url)
                     
