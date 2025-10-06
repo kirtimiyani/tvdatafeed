@@ -97,7 +97,6 @@ class TvDatafeed:
         if username is None or password is None:
             logger.info("Credentials not provided, using unauthorized mode")
             return None
-        
         # Attempt to load the saved token
         saved_token = self.token_manager.load_token(username)
         if saved_token:
