@@ -61,9 +61,8 @@ class TokenManager:
             Optional[str]: Токен если найден и валиден, None иначе
         """
         try:
-            logger.warning("Token is loading")
-            print(os.path.exists("/var/www/html/project"))
-            print(os.path.exists("/var/www/html/project/tvdatafeed_token.json"))
+            # logger.warning("Token is loading")
+            # print(os.path.exists("/var/www/html/project/tvdatafeed_token.json"))
             
             if not os.path.exists(self.token_file):
                 logger.warning(f"Token file {self.token_file} not found on regular dir")
@@ -92,7 +91,6 @@ class TokenManager:
             self.save_token(self.token_data["token"], self.token_data.get("username"))
             
             logger.info(f"Token successfully loaded from {self.token_file}")
-            logger.warning(f"Token successfully loaded from file")
             return self.token_data["token"]
             
         except Exception as e:
