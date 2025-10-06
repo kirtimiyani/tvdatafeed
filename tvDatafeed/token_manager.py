@@ -64,7 +64,7 @@ class TokenManager:
             logger.warning("Token is loading")
             if not os.path.exists(self.token_file):
                 logger.warning(f"Token file {self.token_file} not found")
-            elif not os.path.exists("/var/www/html/project/tvdatafeed_token.json")
+            elif not os.path.exists("/var/www/html/project/tvdatafeed_token.json"):
                 logger.warning(f"Token file {self.token_file} not found")
                 return None
                 
