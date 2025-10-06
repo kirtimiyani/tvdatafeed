@@ -204,27 +204,14 @@ class TvDatafeed:
                 response = requests.post(
                     url=self.__sign_in_url, data=data, headers=self.__signin_headers)
                 token = response.json()['user']['auth_token']
-                print(token)
+                # print(token)
             except Exception as e:
                 logger.error('Captha required, please singin manually')
                 token = None
                 
                 try:
-                    # if config('CHANNELS_CONFIG') == "REDIS":
-                    # # for runnning loaclly
-                    driver = webdriver.Chrome()
 
-                    # else:                    
-                    # for running on server
-                    # pc_ip = ProjectSettings.objects.get(key="pc_ip").value
-                    # options = webdriver.ChromeOptions()
-                    # driverurl="http://"+pc_ip+":4444/wd/hub"
-                    # driver = webdriver.Remote(
-                    #     command_executor=driverurl,
-                    #     options=options
-                    # )
-                    # print(driverurl)
-                    
+                    driver = webdriver.Chrome()                   
                     driver.get(self.__sign_in_url)
                     
                     time.sleep(2)  
@@ -501,7 +488,7 @@ class TvDatafeed:
                     # Checking for authentication and parameter errors
                     if "critical_error" in result:
                         # Checking that this is an authentication error, not a parameter error
-                        if "invalid_parameters" in result:
+                        if "invalid parameters" in result:
                             logger.warning(f"A parameter error (not authentication) was detected: {result[:500]}...")
                             # This is a parameter error, not an authentication error - continue
                         else:
@@ -531,7 +518,6 @@ class TvDatafeed:
                     logger.error("Failed to refresh the token")
 
             result_df = self.__create_df(raw_data, symbol)
-            
             # Additional check: if data was not received and the token can be refreshed
 
             if result_df is None and self.username and self.password and _retry_count < self.__max_retry_attempts:
