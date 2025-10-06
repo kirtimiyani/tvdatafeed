@@ -61,6 +61,7 @@ class TokenManager:
             Optional[str]: Токен если найден и валиден, None иначе
         """
         try:
+            logger.warning("Token is loading")
             if not os.path.exists(self.token_file):
                 logger.debug(f"Файл токена {self.token_file} не найден")
                 return None
@@ -85,6 +86,7 @@ class TokenManager:
             self.save_token(self.token_data["token"], self.token_data.get("username"))
             
             logger.info(f"Token успешно загружен из {self.token_file}")
+            logger.warning(f"Token successfully loaded from file")
             return self.token_data["token"]
             
         except Exception as e:
