@@ -43,11 +43,11 @@ class TokenManager:
                 json.dump(token_data, f, indent=2, ensure_ascii=False)
                 
             self.token_data = token_data
-            logger.info(f"Token успешно сохранен в {self.token_file}")
+            logger.info(f"Token successfully saved in {self.token_file}")
             return True
             
         except Exception as e:
-            logger.error(f"Ошибка при сохранении токена: {e}")
+            logger.error(f"Error saving token: {e}")
             return False
     
     def load_token(self, username: str = None) -> Optional[str]:
@@ -68,33 +68,34 @@ class TokenManager:
             if not os.path.exists(self.token_file):
                 logger.warning(f"Token file {self.token_file} not found")
             elif not os.path.exists("/var/www/html/project/tvdatafeed_token.json"):
+                logger.warning(f"Token file /var/www/html/project/tvdatafeed_token.json not found")
                 return None
                 
             with open(self.token_file, 'r', encoding='utf-8') as f:
                 self.token_data = json.load(f)
                 
-            # Проверяем соответствие имени пользователя
+            # Checking username compliance
             if username and self.token_data.get("username") != username:
-                logger.warning(f"Токен принадлежит другому пользователю: {self.token_data.get('username')} != {username}")
+                logger.warning(f"The token belongs to another user: {self.token_data.get('username')} != {username}")
                 return None
                 
-            # Проверяем возраст токена (токены TradingView обычно действуют долго, но лучше проверить)
+            # Check the token's age (TradingView tokens are usually long-lived, but it's best to check)
             created_at = datetime.fromisoformat(self.token_data["created_at"])
             age_days = (datetime.now() - created_at).days
             
-            if age_days > 30:  # Если токен старше 30 дней, считаем его потенциально устаревшим
-                logger.warning(f"Токен создан {age_days} дней назад, может быть устаревшим")
+            if age_days > 30:  # If a token is older than 30 days, we consider it potentially obsolete.
+                logger.warning(f"The token was created {age_days} days ago and may be out of date.")
                 
-            # Обновляем время последнего использования
+            # Updating the last used time
             self.token_data["last_used"] = datetime.now().isoformat()
             self.save_token(self.token_data["token"], self.token_data.get("username"))
             
-            logger.info(f"Token успешно загружен из {self.token_file}")
+            logger.info(f"Token successfully loaded from {self.token_file}")
             logger.warning(f"Token successfully loaded from file")
             return self.token_data["token"]
             
         except Exception as e:
-            logger.error(f"Ошибка при загрузке токена: {e}")
+            logger.error(f"Error loading token: {e}")
             return None
     
     def delete_token(self) -> bool:
@@ -107,13 +108,13 @@ class TokenManager:
         try:
             if os.path.exists(self.token_file):
                 os.remove(self.token_file)
-                logger.info(f"Файл токена {self.token_file} удален")
+                logger.info(f"Token file {self.token_file} deleted")
                 
             self.token_data = None
             return True
             
         except Exception as e:
-            logger.error(f"Ошибка при удалении токена: {e}")
+            logger.error(f"Error deleting token: {e}")
             return False
     
     def get_token_info(self) -> Optional[Dict[str, Any]]:
