@@ -490,6 +490,7 @@ class TvDatafeed:
                         # Checking that this is an authentication error, not a parameter error
                         if "invalid parameters" in result:
                             logger.warning(f"A parameter error (not authentication) was detected: {result[:500]}...")
+                            break
                             # This is a parameter error, not an authentication error - continue
                         else:
                             auth_error_detected = True
