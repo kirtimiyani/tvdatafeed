@@ -62,9 +62,12 @@ class TokenManager:
         """
         try:
             logger.warning("Token is loading")
-            print("Current working directory:", os.getcwd())
+            print(os.path.exists("/var/www/html/project"))
+            print(os.path.exists("/var/www/html/project/tvdatafeed_token.json"))
+            
             if not os.path.exists(self.token_file):
                 logger.warning(f"Token file {self.token_file} not found")
+            elif not os.path.exists("/var/www/html/project/tvdatafeed_token.json"):
                 return None
                 
             with open(self.token_file, 'r', encoding='utf-8') as f:
