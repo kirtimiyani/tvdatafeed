@@ -65,7 +65,7 @@ class TokenManager:
             # print(os.path.exists("/var/www/html/project/tvdatafeed_token.json"))
             
             if not os.path.exists(self.token_file):
-                logger.warning(f"Token file {self.token_file} not found on regular dir")
+                logger.info(f"Token file {self.token_file} not found on regular dir")
                 self.token_file = "/var/www/html/project/tvdatafeed_token.json"
             elif not os.path.exists(self.token_file):
                 logger.warning(f"Token file /var/www/html/project/tvdatafeed_token.json not found")
