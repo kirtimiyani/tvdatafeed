@@ -106,10 +106,10 @@ class TokenManager:
         """
         try:
             if os.path.exists(self.token_file):
-                os.remove(self.token_file)
+                # os.remove(self.token_file)
                 logger.info(f"Token file {self.token_file} deleted")
                 
-            self.token_data = None
+            # self.token_data = None
             return True
             
         except Exception as e:
