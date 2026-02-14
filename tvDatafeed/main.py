@@ -220,7 +220,7 @@ class TvDatafeed:
                         start_time = time.time()
                         while True:
                             current_url = driver.current_url
-                            if current_url in ["https://www.tradingview.com", "https://ru.tradingview.com/", "https://in.tradingview.com/"]:
+                            if current_url in ["https://www.tradingview.com", "https://www.tradingview.com/", "https://in.tradingview.com/"]:
                                 print("Successful login!")
                                 break
                             
@@ -638,3 +638,4 @@ if __name__ == "__main__":
             extended_session=False,
         )
     )
+
